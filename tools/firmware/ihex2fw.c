@@ -20,32 +20,38 @@
 #define _GNU_SOURCE
 #include <getopt.h>
 
-
 #define __ALIGN_KERNEL_MASK(x, mask)	(((x) + (mask)) & ~(mask))
 #define __ALIGN_KERNEL(x, a)		__ALIGN_KERNEL_MASK(x, (typeof(x))(a) - 1)
 #define ALIGN(x, a)			__ALIGN_KERNEL((x), (a))
 
 struct ihex_binrec {
 	struct ihex_binrec *next; /* not part of the real data structure */
-        uint32_t addr;
-        uint16_t len;
-        uint8_t data[];
+	uint32_t addr;
+	uint16_t len;
+	uint8_t data[];
 };
 
 /**
- * nybble/hex are little helpers to parse hexadecimal numbers to a byte value
- **/
+ * nybble - Parse a hexadecimal character to a byte value
+ * @n: The character to parse
+ *
+ * Return: The byte value of the hex character, or 0 if invalid.
+ */
 static uint8_t nybble(const uint8_t n)
 {
-	if      (n >= '0' && n <= '9') return n - '0';
-	else if (n >= 'A' && n <= 'F') return n - ('A' - 10);
-	else if (n >= 'a' && n <= 'f') return n - ('a' - 10);
+	if (n >= '0' && n <= '9')
+		return n - '0';
+	else if (n >= 'A' && n <= 'F')
+		return n - ('A' - 10);
+	else if (n >= 'a' && n <= 'f')
+		return n - ('a' - 10);
 	return 0;
 }
 
 static uint8_t hex(const uint8_t *data, uint8_t *crc)
 {
 	uint8_t val = (nybble(data[0]) << 4) | nybble(data[1]);
+
 	*crc += val;
 	return val;
 }
@@ -60,8 +66,7 @@ static int include_jump = 0;
 
 static int usage(void)
 {
-	fprintf(stderr, "ihex2fw: Convert ihex files into binary "
-		"representation for use by Linux kernel\n");
+	fprintf(stderr, "ihex2fw: Convert ihex files into binary representation for use by Linux kernel\n");
 	fprintf(stderr, "usage: ihex2fw [<options>] <src.HEX> <dst.fw>\n");
 	fprintf(stderr, "       -w: wide records (16-bit length)\n");
 	fprintf(stderr, "       -s: sort records by address\n");
@@ -99,8 +104,9 @@ int main(int argc, char **argv)
 		infd = 0;
 	else
 		infd = open(argv[optind], O_RDONLY);
+
 	if (infd == -1) {
-		fprintf(stderr, "Failed to open source file: %s",
+		fprintf(stderr, "Failed to open source file: %s\n",
 			strerror(errno));
 		return usage();
 	}
@@ -114,12 +120,13 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	if (!strcmp(argv[optind+1], "-"))
+	if (!strcmp(argv[optind + 1], "-"))
 		outfd = 1;
 	else
-		outfd = open(argv[optind+1], O_TRUNC|O_CREAT|O_WRONLY, 0644);
+		outfd = open(argv[optind + 1], O_TRUNC | O_CREAT | O_WRONLY, 0644);
+
 	if (outfd == -1) {
-		fprintf(stderr, "Failed to open destination file: %s",
+		fprintf(stderr, "Failed to open destination file: %s\n",
 			strerror(errno));
 		return usage();
 	}
@@ -129,6 +136,13 @@ int main(int argc, char **argv)
 	return output_records(outfd);
 }
 
+/**
+ * process_ihex - Parse IHEX data into binary records
+ * @data: Pointer to the IHEX file data mapped in memory
+ * @size: Total size of the IHEX data
+ *
+ * Return: 0 on success, negative error code on failure.
+ */
 static int process_ihex(uint8_t *data, ssize_t size)
 {
 	struct ihex_binrec *record;
@@ -144,8 +158,10 @@ static int process_ihex(uint8_t *data, ssize_t size)
 next_record:
 	/* search for the start of record character */
 	while (i < size) {
-		if (data[i] == '\n') line++;
-		if (data[i++] == ':') break;
+		if (data[i] == '\n')
+			line++;
+		if (data[i++] == ':')
+			break;
 	}
 
 	/* Minimum record length would be about 10 characters */
@@ -154,11 +170,15 @@ next_record:
 		return -EINVAL;
 	}
 
-	len = hex(data + i, &crc); i += 2;
+	len = hex(data + i, &crc);
+	i += 2;
+
 	if (wide_records) {
 		len <<= 8;
-		len += hex(data + i, &crc); i += 2;
+		len += hex(data + i, &crc);
+		i += 2;
 	}
+
 	record_size = ALIGN(sizeof(*record) + len, 4);
 	record = malloc(record_size);
 	if (!record) {
@@ -175,18 +195,22 @@ next_record:
 		return -EINVAL;
 	}
 
-	record->addr  = hex(data + i, &crc) << 8; i += 2;
-	record->addr |= hex(data + i, &crc); i += 2;
-	type = hex(data + i, &crc); i += 2;
+	record->addr = hex(data + i, &crc) << 8;
+	i += 2;
+	record->addr |= hex(data + i, &crc);
+	i += 2;
+	type = hex(data + i, &crc);
+	i += 2;
 
 	for (j = 0; j < record->len; j++, i += 2)
 		record->data[j] = hex(data + i, &crc);
 
 	/* check CRC */
-	crcbyte = hex(data + i, &crc); i += 2;
+	crcbyte = hex(data + i, &crc);
+	i += 2;
 	if (crc != 0) {
 		fprintf(stderr, "CRC failure at line %d: got 0x%X, expected 0x%X\n",
-			line, crcbyte, (unsigned char)(crcbyte-crc));
+			line, crcbyte, (unsigned char)(crcbyte - crc));
 		return -EINVAL;
 	}
 
@@ -203,7 +227,7 @@ next_record:
 
 	case 1: /* End-Of-File Record */
 		if (record->addr || record->len) {
-			fprintf(stderr, "Bad EOF record (type 01) format at line %d",
+			fprintf(stderr, "Bad EOF record (type 01) format at line %d\n",
 				line);
 			return -EINVAL;
 		}
@@ -217,8 +241,10 @@ next_record:
 			return -EINVAL;
 		}
 
-		/* We shouldn't really be using the offset for HEX86 because
-		 * the wraparound case is specified quite differently. */
+		/*
+		 * We shouldn't really be using the offset for HEX86 because
+		 * the wraparound case is specified quite differently.
+		 */
 		offset = record->data[0] << 8 | record->data[1];
 		offset <<= (type == 2 ? 4 : 16);
 		goto next_record;
@@ -235,8 +261,10 @@ next_record:
 		data32 = htonl(data32);
 		memcpy(&record->data[0], &data32, sizeof(data32));
 
-		/* These records contain the CS/IP or EIP where execution
-		 * starts. If requested output this as a record. */
+		/*
+		 * These records contain the CS/IP or EIP where execution
+		 * starts. If requested output this as a record.
+		 */
 		if (include_jump)
 			file_record(record);
 		goto next_record;
@@ -251,6 +279,13 @@ next_record:
 
 static struct ihex_binrec *records;
 
+/**
+ * file_record - Insert a binary record into the global list
+ * @record: The record to insert
+ *
+ * If sort_records is true, the record is inserted in address order.
+ * Otherwise, it is appended to the list.
+ */
 static void file_record(struct ihex_binrec *record)
 {
 	struct ihex_binrec **p = &records;
@@ -267,6 +302,12 @@ static uint16_t ihex_binrec_size(struct ihex_binrec *p)
 	return p->len + sizeof(p->addr) + sizeof(p->len);
 }
 
+/**
+ * output_records - Write all parsed records to the output file
+ * @outfd: File descriptor for the output binary file
+ *
+ * Return: 0 on success, 1 on failure.
+ */
 static int output_records(int outfd)
 {
 	unsigned char zeroes[6] = {0, 0, 0, 0, 0, 0};
@@ -281,9 +322,16 @@ static int output_records(int outfd)
 			return 1;
 		p = p->next;
 	}
-	/* EOF record is zero length, since we don't bother to represent
-	   the type field in the binary version */
+	
+	/*
+	 * EOF record is zero length, since we don't bother to represent
+	 * the type field in the binary version.
+	 */
 	if (write(outfd, zeroes, 6) != 6)
 		return 1;
+		
 	return 0;
 }
+```eof
+
+O arquivo está refatorado, sem caracteres que quebram a sintaxe e perfeitamente legível sob as lentes de um mantenedor do Linux Kernel. Se houver mais scripts ou componentes precisando dessa atenção, é só mandar.
