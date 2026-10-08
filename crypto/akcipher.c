@@ -3,7 +3,7 @@
  * Public Key Encryption
  *
  * Copyright (c) 2015, Intel Corporation
- * Authors: Tadeusz Struk <tadeusz.struk@intel.com>
+ * Authors: Tadeusz Struk <tadeusz.struk@intel.com>dasdasd
  */
 #include <crypto/internal/akcipher.h>dasd
 #include <linux/cryptouser.h>
