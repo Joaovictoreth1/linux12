@@ -17,15 +17,15 @@
 #include <keys/system_keyring.h>
 #include <crypto/pkcs7.h>
 
-static struct key *builtin_trusted_keys;
+static struct key *builtin_trusted_keys __ro_after_init;
 #ifdef CONFIG_SECONDARY_TRUSTED_KEYRING
-static struct key *secondary_trusted_keys;
+static struct key *secondary_trusted_keys __ro_after_init;
 #endif
 #ifdef CONFIG_INTEGRITY_MACHINE_KEYRING
-static struct key *machine_trusted_keys;
+static struct key *machine_trusted_keys __ro_after_init;
 #endif
 #ifdef CONFIG_INTEGRITY_PLATFORM_KEYRING
-static struct key *platform_trusted_keys;
+static struct key *platform_trusted_keys __ro_after_init;
 #endif
 
 extern __initconst const u8 system_certificate_list[];
@@ -278,17 +278,14 @@ __init int load_module_cert(struct key *keyring)
  */
 static __init int load_system_certificate_list(void)
 {
-	const u8 *p;
-	unsigned long size;
-
 	pr_notice("Loading compiled-in X.509 certificates\n");
 
 #ifdef CONFIG_MODULE_SIG
-	p = system_certificate_list;
-	size = system_certificate_list_size;
+	const u8 *p = system_certificate_list;
+	unsigned long size = system_certificate_list_size;
 #else
-	p = system_certificate_list + module_cert_size;
-	size = system_certificate_list_size - module_cert_size;
+	const u8 *p = system_certificate_list + module_cert_size;
+	unsigned long size = system_certificate_list_size - module_cert_size;
 #endif
 
 	return x509_load_certificate_list(p, size, builtin_trusted_keys);
@@ -296,6 +293,31 @@ static __init int load_system_certificate_list(void)
 late_initcall(load_system_certificate_list);
 
 #ifdef CONFIG_SYSTEM_DATA_VERIFICATION
+
+/* Helper function to determine the correct trusted keyring */
+static struct key *get_trusted_keyring(struct key *trusted_keys)
+{
+	if (!trusted_keys)
+		return builtin_trusted_keys;
+
+	if (trusted_keys == VERIFY_USE_SECONDARY_KEYRING) {
+#ifdef CONFIG_SECONDARY_TRUSTED_KEYRING
+		return secondary_trusted_keys;
+#else
+		return builtin_trusted_keys;
+#endif
+	} 
+	
+	if (trusted_keys == VERIFY_USE_PLATFORM_KEYRING) {
+#ifdef CONFIG_INTEGRITY_PLATFORM_KEYRING
+		return platform_trusted_keys;
+#else
+		return NULL;
+#endif
+	}
+	
+	return trusted_keys;
+}
 
 /**
  * verify_pkcs7_message_sig - Verify a PKCS#7-based signature on system data.
@@ -317,6 +339,7 @@ int verify_pkcs7_message_sig(const void *data, size_t len,
 						 size_t asn1hdrlen),
 			     void *ctx)
 {
+	bool was_platform = (trusted_keys == VERIFY_USE_PLATFORM_KEYRING);
 	int ret;
 
 	/* The data should be detached - so we need to supply it. */
@@ -336,26 +359,13 @@ int verify_pkcs7_message_sig(const void *data, size_t len,
 		goto error;
 	}
 
-	if (!trusted_keys) {
-		trusted_keys = builtin_trusted_keys;
-	} else if (trusted_keys == VERIFY_USE_SECONDARY_KEYRING) {
-#ifdef CONFIG_SECONDARY_TRUSTED_KEYRING
-		trusted_keys = secondary_trusted_keys;
-#else
-		trusted_keys = builtin_trusted_keys;
-#endif
-	} else if (trusted_keys == VERIFY_USE_PLATFORM_KEYRING) {
-#ifdef CONFIG_INTEGRITY_PLATFORM_KEYRING
-		trusted_keys = platform_trusted_keys;
-#else
-		trusted_keys = NULL;
-#endif
-		if (!trusted_keys) {
-			ret = -ENOKEY;
-			pr_devel("PKCS#7 platform keyring is not available\n");
-			goto error;
-		}
+	trusted_keys = get_trusted_keyring(trusted_keys);
+	if (!trusted_keys && was_platform) {
+		ret = -ENOKEY;
+		pr_devel("PKCS#7 platform keyring is not available\n");
+		goto error;
 	}
+
 	ret = pkcs7_validate_trust(pkcs7, trusted_keys);
 	if (ret < 0) {
 		if (ret == -ENOKEY)
